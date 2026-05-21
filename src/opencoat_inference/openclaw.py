@@ -5,6 +5,11 @@ from typing import Any
 
 import httpx
 
+from .payer import create_payment_signature_header
+from .privy import PrivyClient
+from .settings import Settings
+from .x402 import PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER
+
 
 def normalize_sidecar_url(base_url: str) -> str:
     url = base_url.rstrip("/")
@@ -63,8 +68,10 @@ class OpenClawProviderAdapter:
 
     def status(self) -> dict[str, Any]:
         health = self._get("/health")
-        wallet = self._get("/v1/wallet")
-        agent_wallet = self._get(f"/v1/agents/{self.config.consumer_agent_id}/wallet")
+        wallet = self._get_optional("/v1/wallet")
+        agent_wallet = self._get_optional(
+            f"/v1/agents/{self.config.consumer_agent_id}/wallet"
+        )
         balance = self._get(
             "/v1/balance",
             headers={"x-opencoat-consumer-agent-id": self.config.consumer_agent_id},
@@ -144,8 +151,80 @@ class OpenClawProviderAdapter:
             },
         )
 
+    def smoke_test(self, prompt: str) -> dict[str, Any]:
+        wallet = self._get_optional("/v1/wallet")
+        if wallet and wallet.get("payment_mode") == "x402":
+            return self._chat_completion_with_x402_payment(prompt)
+        return self.chat_completion(prompt)
+
+    def _chat_completion_with_x402_payment(self, prompt: str) -> dict[str, Any]:
+        settings = Settings.from_env()
+        if not settings.privy_app_id or not settings.privy_app_secret:
+            raise RuntimeError(
+                "OPENCOAT_PRIVY_APP_ID and OPENCOAT_PRIVY_APP_SECRET are required for x402 smoke-test"
+            )
+
+        agent_wallet = self._get(f"/v1/agents/{self.config.consumer_agent_id}/wallet")
+        if agent_wallet.get("status") != "installed":
+            raise RuntimeError(
+                f"Consumer wallet for {self.config.consumer_agent_id} is not installed. "
+                "Run `opencoat-inference openclaw bootstrap` first."
+            )
+
+        wallet_id = settings.consumer_privy_wallet_id or agent_wallet.get("wallet_id")
+        wallet_address = settings.consumer_privy_wallet_address or agent_wallet.get("address")
+        if not wallet_id or not wallet_address:
+            raise RuntimeError(
+                f"No Privy payer wallet found for {self.config.consumer_agent_id}."
+            )
+
+        privy = PrivyClient(
+            app_id=settings.privy_app_id,
+            app_secret=settings.privy_app_secret,
+            base_url=settings.privy_api_base_url,
+        )
+        headers = {"x-opencoat-consumer-agent-id": self.config.consumer_agent_id}
+        payload = {
+            "model": self.config.model,
+            "provider_agent_id": self.config.provider_agent_id,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        first = self.client.post(
+            f"{self.sidecar_url}/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        if first.status_code != 402:
+            first.raise_for_status()
+            return first.json()
+
+        payment_required = first.headers.get(PAYMENT_REQUIRED_HEADER)
+        if not payment_required:
+            raise RuntimeError("Server returned 402 without PAYMENT-REQUIRED header")
+
+        payment_signature = create_payment_signature_header(
+            payment_required_header=payment_required,
+            wallet_id=wallet_id,
+            wallet_address=wallet_address,
+            privy=privy,
+        )
+        paid = self.client.post(
+            f"{self.sidecar_url}/v1/chat/completions",
+            headers={**headers, PAYMENT_SIGNATURE_HEADER: payment_signature},
+            json=payload,
+        )
+        paid.raise_for_status()
+        return paid.json()
+
     def _get(self, path: str, **kwargs: Any) -> dict[str, Any]:
         response = self.client.get(f"{self.sidecar_url}{path}", **kwargs)
+        response.raise_for_status()
+        return response.json()
+
+    def _get_optional(self, path: str, **kwargs: Any) -> dict[str, Any] | None:
+        response = self.client.get(f"{self.sidecar_url}{path}", **kwargs)
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
         return response.json()
 
