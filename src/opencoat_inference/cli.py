@@ -7,6 +7,7 @@ import httpx
 import uvicorn
 
 from .ledger import Ledger
+from .openclaw import OpenClawProviderAdapter, OpenClawProviderConfig
 from .payer import create_payment_signature_header
 from .privy import PrivyClient
 from .server import create_app
@@ -65,6 +66,112 @@ def wallet() -> None:
             indent=2,
         )
     )
+
+
+@main.group()
+def openclaw() -> None:
+    """Automate OpenClaw provider adapter setup."""
+
+
+def _openclaw_config(
+    base_url: str,
+    agent_id: str,
+    model: str,
+    provider_agent_id: str,
+) -> OpenClawProviderConfig:
+    return OpenClawProviderConfig(
+        sidecar_url=base_url,
+        consumer_agent_id=agent_id,
+        model=model,
+        provider_agent_id=provider_agent_id,
+    )
+
+
+@openclaw.command("config")
+@click.option("--base-url", default="http://127.0.0.1:7888", show_default=True)
+@click.option("--agent-id", default="openclaw-local", show_default=True)
+@click.option("--model", default="opencoat-stub", show_default=True)
+@click.option("--provider-agent-id", default="agent_opencoat_stub", show_default=True)
+def openclaw_config(
+    base_url: str,
+    agent_id: str,
+    model: str,
+    provider_agent_id: str,
+) -> None:
+    """Print OpenClaw OpenAI-compatible provider configuration."""
+    config = _openclaw_config(base_url, agent_id, model, provider_agent_id)
+    click.echo(json.dumps(config.model_config(), indent=2))
+
+
+@openclaw.command("status")
+@click.option("--base-url", default="http://127.0.0.1:7888", show_default=True)
+@click.option("--agent-id", default="openclaw-local", show_default=True)
+@click.option("--model", default="opencoat-stub", show_default=True)
+@click.option("--provider-agent-id", default="agent_opencoat_stub", show_default=True)
+def openclaw_status(
+    base_url: str,
+    agent_id: str,
+    model: str,
+    provider_agent_id: str,
+) -> None:
+    """Check sidecar, wallet, provider, and OpenClaw routing readiness."""
+    with OpenClawProviderAdapter(
+        _openclaw_config(base_url, agent_id, model, provider_agent_id)
+    ) as adapter:
+        click.echo(json.dumps(adapter.status(), indent=2))
+
+
+@openclaw.command("bootstrap")
+@click.option("--base-url", default="http://127.0.0.1:7888", show_default=True)
+@click.option("--agent-id", default="openclaw-local", show_default=True)
+@click.option("--model", default="opencoat-stub", show_default=True)
+@click.option("--provider-agent-id", default="agent_opencoat_stub", show_default=True)
+@click.option("--provider-owner-id", default="opencoat-provider", show_default=True)
+@click.option("--install-wallets/--no-install-wallets", default=True, show_default=True)
+@click.option("--grant-trial/--no-grant-trial", default=True, show_default=True)
+def openclaw_bootstrap(
+    base_url: str,
+    agent_id: str,
+    model: str,
+    provider_agent_id: str,
+    provider_owner_id: str,
+    install_wallets: bool,
+    grant_trial: bool,
+) -> None:
+    """Install wallets, grant trial credit, and print OpenClaw provider config."""
+    with OpenClawProviderAdapter(
+        _openclaw_config(base_url, agent_id, model, provider_agent_id)
+    ) as adapter:
+        click.echo(
+            json.dumps(
+                adapter.bootstrap(
+                    install_wallets=install_wallets,
+                    grant_trial=grant_trial,
+                    provider_owner_id=provider_owner_id,
+                ),
+                indent=2,
+            )
+        )
+
+
+@openclaw.command("smoke-test")
+@click.option("--base-url", default="http://127.0.0.1:7888", show_default=True)
+@click.option("--agent-id", default="openclaw-local", show_default=True)
+@click.option("--model", default="opencoat-stub", show_default=True)
+@click.option("--provider-agent-id", default="agent_opencoat_stub", show_default=True)
+@click.option("--input", "prompt", default="OpenClaw provider adapter smoke test", show_default=True)
+def openclaw_smoke_test(
+    base_url: str,
+    agent_id: str,
+    model: str,
+    provider_agent_id: str,
+    prompt: str,
+) -> None:
+    """Send one OpenAI-compatible request through the OpenCOAT sidecar."""
+    with OpenClawProviderAdapter(
+        _openclaw_config(base_url, agent_id, model, provider_agent_id)
+    ) as adapter:
+        click.echo(json.dumps(adapter.chat_completion(prompt), indent=2))
 
 
 @main.command("pay-and-call")

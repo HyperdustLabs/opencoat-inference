@@ -35,6 +35,7 @@ provider API key by pointing its model base URL at OpenCOAT Inference.
 - Optional OpenAI-compatible upstream LLM provider.
 - Wallet/payment receiver configuration endpoint.
 - Atomic local ledger charge semantics for concurrent requests.
+- OpenClaw provider adapter CLI and simple tool plugin.
 
 Out of scope for the first repo scaffold:
 
@@ -99,6 +100,7 @@ Inspect local state:
 uv run opencoat-inference balance
 uv run opencoat-inference history
 uv run opencoat-inference wallet
+uv run opencoat-inference openclaw status
 curl -sS http://127.0.0.1:7888/v1/requests | python3 -m json.tool
 ```
 
@@ -200,8 +202,8 @@ consumer wallet
   pays x402 requests and signs PAYMENT-SIGNATURE
 ```
 
-The provider wallet path is implemented now. Consumer-side Privy signing is the
-next client step.
+Provider and consumer wallet installation are implemented. The CLI can also
+perform a paid x402 call with a Privy consumer wallet.
 
 Configure Privy REST credentials:
 
@@ -279,6 +281,20 @@ token accounts for:
 ```text
 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 ```
+
+## OpenClaw Provider Adapter
+
+OpenClaw can use the sidecar as an OpenAI-compatible provider. The adapter
+automates the setup and health checks:
+
+```bash
+uv run opencoat-inference openclaw bootstrap
+uv run opencoat-inference openclaw config
+uv run opencoat-inference openclaw smoke-test
+```
+
+The OpenClaw plugin wrapper lives in `integrations/openclaw` and exposes tools
+for bootstrap, status, provider config, and smoke testing.
 
 If the facilitator returns `transaction_simulation_failed` with
 `InvalidAccountData`, the usual cause is a missing associated token account or
