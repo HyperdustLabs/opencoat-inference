@@ -3,8 +3,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.env.local
+.opencoat-local/
 dist/
 build/
 *.egg-info/
 .DS_Store
-
