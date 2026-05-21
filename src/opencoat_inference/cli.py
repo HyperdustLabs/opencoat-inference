@@ -171,7 +171,7 @@ def openclaw_smoke_test(
     with OpenClawProviderAdapter(
         _openclaw_config(base_url, agent_id, model, provider_agent_id)
     ) as adapter:
-        click.echo(json.dumps(adapter.chat_completion(prompt), indent=2))
+        click.echo(json.dumps(adapter.smoke_test(prompt), indent=2))
 
 
 @main.command("pay-and-call")

@@ -97,10 +97,34 @@ def test_openclaw_bootstrap_reports_missing_privy_without_hiding_provider_config
     assert {step["status"] for step in wallet_steps} == {"needs_configuration"}
 
 
+def test_openclaw_status_tolerates_missing_wallet_route():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return json_response({"ok": True})
+        if request.url.path in {"/v1/wallet", "/v1/agents/openclaw-local/wallet"}:
+            return json_response({"error": "not found"}, status_code=404)
+        if request.url.path == "/v1/balance":
+            return json_response({"consumer_id": "openclaw-local", "balance_usdc": 0.1})
+        if request.url.path == "/v1/inference-agents":
+            return json_response({"agents": []})
+        return json_response({"error": "not found"}, status_code=404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = OpenClawProviderAdapter(client=client)
+
+    result = adapter.status()
+
+    assert result["status"] == "ready"
+    assert result["wallet"] is None
+    assert result["consumer_wallet"] is None
+
+
 def test_openclaw_smoke_test_sends_consumer_header():
     captured_headers = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/wallet":
+            return json_response({"payment_mode": "local-ledger"})
         captured_headers.update(request.headers)
         assert request.url.path == "/v1/chat/completions"
         assert request_json(request)["provider_agent_id"] == "agent_opencoat_stub"
@@ -109,7 +133,23 @@ def test_openclaw_smoke_test_sends_consumer_header():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     adapter = OpenClawProviderAdapter(client=client)
 
-    result = adapter.chat_completion("hello")
+    result = adapter.smoke_test("hello")
 
     assert result["id"] == "chatcmpl_123"
     assert captured_headers["x-opencoat-consumer-agent-id"] == "openclaw-local"
+
+
+def test_openclaw_smoke_test_uses_ledger_mode_without_payment():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/wallet":
+            return json_response({"payment_mode": "local-ledger"})
+        if request.url.path == "/v1/chat/completions":
+            return json_response({"id": "chatcmpl_ledger", "choices": []})
+        return json_response({"error": "not found"}, status_code=404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = OpenClawProviderAdapter(client=client)
+
+    result = adapter.smoke_test("hello")
+
+    assert result["id"] == "chatcmpl_ledger"
